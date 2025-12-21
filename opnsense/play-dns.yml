@@ -1,0 +1,211 @@
+---
+- name: Warm-up
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Parse .env
+      ansible.builtin.set_fact:
+        dotenv: "{{ ('[dotenv]\n' + lookup('ansible.builtin.file', '.env') ) | community.general.from_ini }}"
+
+- name: Provision DNS configuration
+  hosts: localhost
+  gather_facts: no
+  vars:
+    dns_conf:
+
+      local:
+        dns_host: "192.168.178.228"
+        dns_api_key: "{{ dotenv.dotenv.OPNSENSE_APIKEY }}"
+        dns_api_secret: "{{ dotenv.dotenv.OPNSENSE_APISECRET }}"
+        records:
+          - {"name": "opnsense",       "domain": "chapo.casa", "type": "A",     "address": "192.168.179.1",   "ptr": true  }
+          - {"name": "openmediavault", "domain": "chapo.casa", "type": "A",     "address": "192.168.179.20",  "ptr": true  }
+          - {"name": "media",          "domain": "chapo.casa", "type": "A",     "address": "192.168.179.21",  "ptr": true  }
+          - {"name": "qbittorrent",    "domain": "chapo.casa", "type": "A",     "address": "192.168.179.22",  "ptr": true  }
+          - {"name": "core",           "domain": "chapo.casa", "type": "A",     "address": "192.168.179.23",  "ptr": true  }
+          - {"name": "runner",         "domain": "chapo.casa", "type": "A",     "address": "192.168.179.24",  "ptr": true  }
+          - {"name": "git",            "domain": "chapo.casa", "type": "CNAME", "address": "core",            "ptr": false }
+          - {"name": "fritz",          "domain": "chapo.casa", "type": "A",     "address": "192.168.178.1",   "ptr": false }
+          - {"name": "server",         "domain": "chapo.casa", "type": "A",     "address": "192.168.178.225", "ptr": true  }
+          - {"name": "jellyfin",       "domain": "chapo.casa", "type": "CNAME", "address": "media",           "ptr": false }
+          - {"name": "radarr",         "domain": "chapo.casa", "type": "CNAME", "address": "media",           "ptr": false }
+          - {"name": "sonarr",         "domain": "chapo.casa", "type": "CNAME", "address": "media",           "ptr": false }
+          - {"name": "jellyseerr",     "domain": "chapo.casa", "type": "CNAME", "address": "media",           "ptr": false }
+
+  tasks:
+    - name: OPN get override
+      ansible.builtin.uri:
+        url: "http://{{ dns_conf.local.dns_host }}/api/unbound/settings/searchHostOverride"
+        method: POST
+        user: "{{ dns_conf.local.dns_api_key }}"
+        password: "{{ dns_conf.local.dns_api_secret }}"
+        force_basic_auth: yes
+        validate_certs: no
+        headers:
+          Content-Type: "application/json"
+        body_format: json
+        body:
+      register: dns_local_existing_override
+
+    - name: OPN get alias
+      ansible.builtin.uri:
+        url: "http://{{ dns_conf.local.dns_host }}/api/unbound/settings/searchHostAlias"
+        method: POST
+        user: "{{ dns_conf.local.dns_api_key }}"
+        password: "{{ dns_conf.local.dns_api_secret }}"
+        force_basic_auth: yes
+        validate_certs: no
+        headers:
+          Content-Type: "application/json"
+        body_format: json
+        body:
+      register: dns_local_existing_alias
+
+    - name: OPN addHostOverride
+      when: >
+        lookup('community.general.dig', '@'+dns_conf.local.dns_host, record.name+'.'+record.domain, 'qtype=A') == "NXDOMAIN"
+      ansible.builtin.uri:
+        url: "http://{{ dns_conf.local.dns_host }}/api/unbound/settings/addHostOverride"
+        method: POST
+        user: "{{ dns_conf.local.dns_api_key }}"
+        password: "{{ dns_conf.local.dns_api_secret }}"
+        force_basic_auth: yes
+        validate_certs: no
+        headers:
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          host:
+            enabled: 1
+            hostname: "{{ record.name }}"
+            domain: "{{ record.domain }}"
+            rr: "A"
+            mxprio: ""
+            mx: ""
+            description: "Auto-added forward entry"
+            server: "{{ record.address }}"
+      loop: "{{ dns_conf.local.records | selectattr('type', 'equalto', 'A') }}"
+      loop_control:
+        loop_var: record
+        label: "{{ record.name }}.{{ record.domain }} → {{ record.address }}"
+
+    - name: OPN addHostPtr
+      when: >
+        lookup('community.general.dig', '@'+dns_conf.local.dns_host, record.address + '/PTR') == "NXDOMAIN"
+      ansible.builtin.uri:
+        url: "http://{{ dns_conf.local.dns_host }}/api/unbound/settings/addHostPtr"
+        method: POST
+        user: "{{ dns_conf.local.dns_api_key }}"
+        password: "{{ dns_conf.local.dns_api_secret }}"
+        force_basic_auth: yes
+        validate_certs: no
+        headers:
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          host:
+            enabled: 1
+            hostname: "{{ record.name }}"
+            domain: "{{ record.domain }}"
+            server: "{{ record.address }}"
+            description: "Auto-added reverse PTR for {{ record.name }}.{{ record.domain }}"
+      loop: "{{ dns_conf.local.records | selectattr('type', 'equalto', 'A') | selectattr('ptr', 'equalto', true) }}"
+      loop_control:
+        loop_var: record
+        label: "{{ record.name }}.{{ record.domain }} → {{ record.address }}/PTR"
+
+    - name: OPN addHostAlias
+      when: >
+        lookup('community.general.dig', '@'+dns_conf.local.dns_host, record.name+'.'+record.domain, 'qtype=A') == "NXDOMAIN"
+      vars:
+        target_override: >-
+          {{ dns_local_existing_override.json.rows | 
+              selectattr('hostname', 'equalto', record.address) | 
+              selectattr('domain', 'equalto', record.domain) | 
+              list }}
+        target_uuid: >-
+          {{ target_override | 
+              map(attribute='uuid') | 
+              list | first | default('') | trim }}
+      uri:
+        url: "http://{{ dns_conf.local.dns_host }}/api/unbound/settings/addHostAlias"
+        method: POST
+        user: "{{ dns_conf.local.dns_api_key }}"
+        password: "{{ dns_conf.local.dns_api_secret }}"
+        force_basic_auth: yes
+        validate_certs: no
+        headers:
+          Content-Type: application/json
+        body_format: json
+        body:
+          alias:
+            enabled: 1
+            host: "{{ target_uuid }}"
+            hostname: "{{ record.name }}"
+            domain: "{{ record.domain  }}"
+            description: "Alias created by Ansible for {{ record.address }}"
+      loop: "{{ dns_conf.local.records | selectattr('type', 'equalto', 'CNAME') }}"
+      loop_control:
+        loop_var: record
+        label: "{{ record.name }}.{{ record.domain }} → {{ record.address }}"
+
+    - name: OPN clean unwanted override
+      vars:
+        existing_overrides: >
+          {{ dns_local_existing_override.json.rows | 
+             map(attribute='hostname') | 
+             list }}
+      ansible.builtin.uri:
+        url: "http://{{ dns_conf.local.dns_host }}/api/unbound/settings/delHostOverride/{{ item.uuid }}"
+        method: POST
+        user: "{{ dns_conf.local.dns_api_key }}"
+        password: "{{ dns_conf.local.dns_api_secret }}"
+        force_basic_auth: yes
+        validate_certs: no
+        headers:
+          Content-Type: "application/json"
+        body_format: json
+        body:
+      loop: "{{ dns_local_existing_override.json.rows }}"
+      loop_control:
+        label: "{{ item.hostname }}.{{ item.domain }}"
+      when: dns_conf.local.records |
+          selectattr('type', 'equalto', 'A') |
+          selectattr('name', 'equalto', item.hostname) |
+          selectattr('domain', 'equalto', item.domain) | list | length == 0
+
+    - name: OPN clean unwanted alias
+      vars:
+        existing_aliases: >
+          {{ dns_local_existing_alias.json.rows | 
+             map(attribute='hostname') | 
+             list }}
+      ansible.builtin.uri:
+        url: "http://{{ dns_conf.local.dns_host }}/api/unbound/settings/delHostAlias/{{ item.uuid }}"
+        method: POST
+        user: "{{ dns_conf.local.dns_api_key }}"
+        password: "{{ dns_conf.local.dns_api_secret }}"
+        force_basic_auth: yes
+        validate_certs: no
+        headers:    
+          Content-Type: "application/json"
+        body_format: json
+        body:
+      loop: "{{ dns_local_existing_alias.json.rows }}"
+      loop_control:
+        label: "{{ item.hostname }}.{{ item.domain }}"
+      when: dns_conf.local.records |
+          selectattr('type', 'equalto', 'CNAME') |
+          selectattr('name', 'equalto', item.hostname) |
+          selectattr('domain', 'equalto', item.domain) | list | length == 0 
+
+    - name: Apply Unbound configuration
+      ansible.builtin.uri:
+        url: "http://{{ dns_conf.local.dns_host }}/api/unbound/service/reconfigure"
+        method: POST
+        user: "{{ dns_conf.local.dns_api_key }}"
+        password: "{{ dns_conf.local.dns_api_secret }}"
+        force_basic_auth: yes
+        validate_certs: no
+        body: ""
+      register: reconfig

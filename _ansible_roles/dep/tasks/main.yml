@@ -1,0 +1,110 @@
+---
+# CHECK EXISTENCE (Idempotency)
+- name: Check if VM already exists
+  delegate_to: localhost
+  community.proxmox.proxmox_vm_info:
+    api_host: "{{ dep_pve_host }}"
+    api_user: "{{ dep_pve_user }}"
+    api_password: "{{ dep_pve_password }}"
+    node: "{{ dep_pve_node }}"
+    vmid: "{{ dep_vm_id }}"
+    validate_certs: no
+  register: vm_info
+  ignore_errors: yes
+  tags: check
+
+- name: Set deployment flag
+  set_fact:
+    vm_to_deploy: "{{ dep_vm_info.failed or vm_info.proxmox_vms | length == 0 }}"
+  tags: check
+
+# CLONE VM FROM TEMPLATE
+- name: Clone VM from Template
+  when: vm_to_deploy
+  delegate_to: localhost
+  community.proxmox.proxmox_kvm:
+    api_host: "{{ dep_pve_host }}"
+    api_user: "{{ dep_pve_user }}"
+    api_password: "{{ dep_pve_password }}"
+    node: "{{ dep_pve_node }}"
+    newid: "{{ dep_vm_id }}"
+    name: "{{ dep_vm_name }}"
+    clone: "{{ dep_template_name }}"
+    full: yes
+    storage: "{{ dep_pve_storage }}"
+    format: qcow2
+    validate_certs: no
+    timeout: 300
+  register: clone_result
+  tags: clone
+
+# RESIZE DISK
+- name: Resize VM Disk
+  when: vm_to_deploy or clone_result.changed
+  delegate_to: localhost
+  community.proxmox.proxmox_disk:
+    api_host: "{{ dep_pve_host }}"
+    api_user: "{{ dep_pve_user }}"
+    api_password: "{{ dep_pve_password }}"
+    vmid: "{{ dep_vm_id }}"
+    disk: scsi0
+    size: "{{ dep_vm_disk_gb }}G"
+    state: resized
+    validate_certs: no
+  register: resize_result
+  ignore_errors: yes
+  tags: resize
+
+# CONFIGURE HARDWARE & CLOUD-INIT
+- name: Configure VM Resources and Cloud-Init
+  delegate_to: localhost
+  community.proxmox.proxmox_kvm:
+    api_host: "{{ dep_pve_host }}"
+    api_user: "{{ dep_pve_user }}"
+    api_password: "{{ dep_pve_password }}"
+    node: "{{ dep_pve_node }}"
+    vmid: "{{ dep_vm_id }}"
+    name: "{{ dep_vm_name }}"
+    cores: "{{ dep_vm_cores }}"
+    memory: "{{ dep_vm_memory_mb }}"
+    # Cloud-Init Configuration
+    ciuser: "{{ dep_ansible_user }}"
+    sshkeys: "{{ dep_ssh_key_pub }}"
+    ipconfig:
+      ipconfig0: "ip={{ dep_nic_ip_cidr }},gw={{ dep_nic_gateway }}"
+    # Disk configuration
+    scsi:
+      scsi0: "{{ dep_pve_storage }}:vm-{{ dep_vm_id }}-disk-0"
+    # Boot configuration
+    boot: "order=scsi0;ide2"
+    bootdisk: scsi0
+    bios: seabios
+    ostype: l26
+    validate_certs: no
+    update: yes
+  register: config_result
+  tags: config
+
+# START VM
+- name: Start VM
+  delegate_to: localhost
+  community.proxmox.proxmox_kvm:
+    api_host: "{{ dep_pve_host }}"
+    api_user: "{{ dep_pve_user }}"
+    api_password: "{{ dep_pve_password }}"
+    node: "{{ dep_pve_node }}"
+    vmid: "{{ dep_vm_id }}"
+    state: started
+    validate_certs: no
+  register: start_result
+  tags: start
+
+- name: Wait for SSH port to be open
+  ansible.builtin.wait_for:
+    host: "{{ ansible_host }}"
+    port: 22
+    delay: 5
+    timeout: 300
+  delegate_to: localhost
+  tags: start
+...

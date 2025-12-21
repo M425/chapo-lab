@@ -1,0 +1,191 @@
+---
+- name: Template
+  hosts: localhost
+  gather_facts: no
+  tasks:
+
+    # 1. AUTHENTICATION: Get a Ticket (CSRF Token) for direct API calls
+    - name: Get Proxmox API Ticket
+      connection: local
+      ansible.builtin.uri:
+        url: "https://{{ pve_host }}:8006/api2/json/access/ticket"
+        method: POST
+        validate_certs: no
+        body_format: form-urlencoded
+        body:
+          username: "{{ pve_user }}"
+          password: "{{ pve_password }}"
+      register: auth_response
+      tags: always
+
+    - name: Set Auth Facts
+      set_fact:
+        pve_auth_cookie: "PVEAuthCookie={{ auth_response.json.data.ticket }}"
+        pve_csrf_token: "{{ auth_response.json.data.CSRFPreventionToken }}"
+      tags: always
+
+    # 2. STORAGE CONFIGURATION (The Fix)
+    # We must ensure the source storage allows 'import' content type.
+    #    - name: Get Storage Configuration
+    #      connection: local
+    #      ansible.builtin.uri:
+    #        url: "https://{{ pve_host }}:8006/api2/json/storage/{{ pve_storage_source }}"
+    #        method: GET
+    #        validate_certs: no
+    #        headers:
+    #          Cookie: "{{ pve_auth_cookie }}"
+    #      register: storage_config
+    #      tags: storage
+    #
+    #    - name: Enable 'import' content type on storage if missing
+    #      connection: local
+    #      # Only run if 'import' is not already in the content list
+    #      when: "'import' not in storage_config.json.data.content"
+    #      ansible.builtin.uri:
+    #        url: "https://{{ pve_host }}:8006/api2/json/storage/{{ pve_storage_source }}"
+    #        method: PUT
+    #        validate_certs: no
+    #        headers:
+    #          Cookie: "{{ pve_auth_cookie }}"
+    #          CSRFPreventionToken: "{{ pve_csrf_token }}"
+    #        body_format: form-urlencoded
+    #        body:
+    #          # Append 'import' to the existing content types
+    #          content: "{{ storage_config.json.data.content }},import"
+    #      tags: storage
+
+    # 3. TEMPLATE CREATION FLOW
+    - name: Check if template exists
+      connection: local
+      ansible.builtin.uri:
+        url: "https://{{ pve_host }}:8006/api2/json/nodes/{{ pve_node }}/qemu/{{ template_id }}/status/current"
+        method: GET
+        validate_certs: no
+        headers:
+          Cookie: "{{ pve_auth_cookie }}"
+      register: template_check
+      ignore_errors: yes
+      tags: template
+
+    - debug:
+        var: template_check
+      tags: template
+
+    - name: Set template_to_deploy fact
+      set_fact:
+        template_to_deploy: "{{ template_check.status == 400 or template_check.failed }}"
+      tags: template
+
+    # 4. DOWNLOAD AND IMPORT IMAGE
+    - name: Download Cloud Image to Proxmox
+      when: template_to_deploy
+      connection: local
+      ansible.builtin.uri:
+        url: "https://{{ pve_host }}:8006/api2/json/nodes/{{ pve_node }}/storage/{{ pve_storage_source }}/download-url"
+        method: POST
+        validate_certs: no
+        headers:
+          Cookie: "{{ pve_auth_cookie }}"
+          CSRFPreventionToken: "{{ pve_csrf_token }}"
+        body_format: form-urlencoded
+        body:
+          content: iso  # <--- KEY CHANGE: 'iso' to 'import'
+          filename: "{{ image_filename }}"
+          url: "{{ image_url }}"
+      register: last_task
+      tags: download
+
+    - name: Wait for Task to Complete
+      when: template_to_deploy
+      connection: local
+      ansible.builtin.uri:
+        url: "https://{{ pve_host }}:8006/api2/json/nodes/{{ pve_node }}/tasks/{{ last_task.json.data }}/status"
+        method: GET
+        validate_certs: no
+        headers:
+          Cookie: "{{ pve_auth_cookie }}"
+      register: task_status
+      until: task_status.json.data.status == 'stopped' and task_status.json.data.exitstatus == 'OK'
+      retries: 30
+      delay: 10
+      tags: download
+
+    # 5. Create VM and Import Disk
+    - name: Create VM and Import Disk
+      when: template_to_deploy
+      connection: local
+      ansible.builtin.uri:
+        url: "https://{{ pve_host }}:8006/api2/json/nodes/{{ pve_node }}/qemu"
+        method: POST
+        validate_certs: no
+        headers:
+          Cookie: "{{ pve_auth_cookie }}"
+          CSRFPreventionToken: "{{ pve_csrf_token }}"
+        body_format: form-urlencoded
+        body:
+          vmid: "{{ template_id }}"
+          name: "{{ template_name }}"
+          memory: 1024
+          cores: 1
+          net0: "virtio,bridge={{ pve_bridge }}"
+          scsihw: "virtio-scsi-pci"
+          # Magic line: Referencing the 'import' namespace
+          scsi0: "{{ pve_storage_dest }}:0,import-from={{ image_path }}/{{ image_filename }}"
+          ide2: "{{ pve_storage_dest }}:cloudinit"
+          boot: "order=scsi0"
+          serial0: "socket"
+          vga: "serial0"
+          ostype: "l26"
+          agent: 1
+      tags: create
+      register: last_task
+
+    - name: Debug Create VM Response
+      when: template_to_deploy
+      debug:
+        var: last_task
+      tags: create
+
+    - name: Wait for Task to Complete
+      when: template_to_deploy
+      connection: local
+      ansible.builtin.uri:
+        url: "https://{{ pve_host }}:8006/api2/json/nodes/{{ pve_node }}/tasks/{{ last_task.json.data }}/status"
+        method: GET
+        validate_certs: no
+        headers:
+          Cookie: "{{ pve_auth_cookie }}"
+      register: task_status
+      until: task_status.json.data.status == 'stopped' and task_status.json.data.exitstatus == 'OK'
+      retries: 30
+      delay: 10
+      tags: create
+
+    # 6. CONVERT VM TO TEMPLATE
+    - name: Convert to Template
+      when: template_to_deploy
+      connection: local
+      ansible.builtin.uri:
+        url: "https://{{ pve_host }}:8006/api2/json/nodes/{{ pve_node }}/qemu/{{ template_id }}/template"
+        method: POST
+        validate_certs: no
+        headers:
+          Cookie: "{{ pve_auth_cookie }}"
+          CSRFPreventionToken: "{{ pve_csrf_token }}"
+      register: last_task
+      tags: convert
+
+    - name: Wait for Task to Complete
+      when: template_to_deploy
+      connection: local
+      ansible.builtin.uri:
+        url: "https://{{ pve_host }}:8006/api2/json/nodes/{{ pve_node }}/tasks/{{ last_task.json.data }}/status"
+        method: GET
+        validate_certs: no
+        headers:
+          Cookie: "{{ pve_auth_cookie }}"
+      register: task_status
+      until: task_status.json.data.status == 'stopped' and task_status.json.data.exitstatus == 'OK'
+      retries: 30
+      delay: 10
+      tags: convert

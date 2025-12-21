@@ -1,0 +1,42 @@
+---
+- name: Manage media
+  hosts: ubuntu
+  gather_facts: no
+  vars:
+  roles:
+
+    - role: dep
+      tags: dep
+      when: os_type == 'ubuntu'
+      vars:
+        dep_pve_host: "{{ pve_host | mandatory }}"
+        dep_pve_user: "{{ pve_user | mandatory }}"
+        dep_pve_password: "{{ pve_password | mandatory }}"
+        dep_pve_node: "{{ pve_node | mandatory }}"
+        dep_vm_id: "{{ vm_id | mandatory }}"
+        dep_vm_info: "{{ vm_info | mandatory }}"
+        dep_vm_name: "{{ vm_name | mandatory }}"
+        dep_template_name: "{{ template_name | mandatory }}"
+        dep_pve_storage: "{{ pve_storage | mandatory }}"
+        dep_vm_disk_gb: "{{ vm_disk_gb | mandatory }}"
+        dep_vm_cores: "{{ vm_cores | mandatory }}"
+        dep_vm_memory_mb: "{{ vm_memory_mb | mandatory }}"
+        dep_ansible_user: "{{ ansible_user | mandatory }}"
+        dep_ssh_key_pub: "{{ ssh_key_pub | mandatory }}"
+        dep_nic_ip_cidr: "{{ nic_ip_cidr | mandatory }}"
+        dep_nic_gateway: "{{ nic_gateway | mandatory }}"
+
+    - role: ubu
+      tags: ubu
+      when: os_type == 'ubuntu'
+      become: yes
+      vars:
+        ubu_timezone: "{{ timezone | mandatory }}"
+        ubu_ufw_allowed_ports: "{{ ufw_allowed_ports | mandatory }}"
+        ubu_admin_users: "{{ admin_users | mandatory }}"
+        ubu_swap_size_mb: "{{ swap_size_mb | mandatory }}"
+        ubu_docker_users: "{{ docker_users | mandatory }}"
+        ubu_enable_auto_updates: "{{ enable_auto_updates | mandatory }}"
+
+  tasks: []
+...
