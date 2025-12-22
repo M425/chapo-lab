@@ -1,0 +1,8 @@
+---
+
+- name: Include tasks for service VM
+  include_tasks: "single_svc.yml"
+  loop: "{{ svc_svcs }}"
+  loop_control:
+    loop_var: svc
+

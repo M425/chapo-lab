@@ -1,0 +1,29 @@
+---
+- name: Ensure monitoring user exists
+  delegate_to: "localhost"
+  community.proxmox.proxmox_user:
+    api_host: "{{ pve_pve_host }}"
+    api_user: "{{ pve_pve_user }}"
+    api_password: "{{ pve_pve_password }}"
+    name: "{{ pve_mon_user }}"
+    comment: "Monitoring user"
+    password: "monitoring!"
+    enable: true
+    state: present
+  register: user_create
+
+- name: Enable role PVEAuditor for monitoring user
+  delegate_to: "localhost"
+  community.proxmox.proxmox_access_acl:
+    api_host: "{{ pve_pve_host }}"
+    api_user: "{{ pve_pve_user }}"
+    api_password: "{{ pve_pve_password }}"
+    state: present
+    path: /
+    type: user
+    ugid: "{{ pve_mon_user }}"
+    roleid: PVEAuditor
+    propagate: 1
+
+## Manually generate api token
+# Permission / API Token / Generate -> select user and store secret and id.

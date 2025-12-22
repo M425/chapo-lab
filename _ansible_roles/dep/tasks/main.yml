@@ -103,7 +103,7 @@
   ansible.builtin.wait_for:
     host: "{{ ansible_host }}"
     port: 22
-    delay: 5
+    delay: 1
     timeout: 300
   delegate_to: localhost
   tags: start

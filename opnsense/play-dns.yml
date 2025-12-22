@@ -5,7 +5,7 @@
   tasks:
     - name: Parse .env
       ansible.builtin.set_fact:
-        dotenv: "{{ ('[dotenv]\n' + lookup('ansible.builtin.file', '.env') ) | community.general.from_ini }}"
+        dotenv: "{{ ('[dotenv]\n' + lookup('ansible.builtin.file', '../.env') ) | community.general.from_ini }}"
 
 - name: Provision DNS configuration
   hosts: localhost
@@ -23,7 +23,7 @@
           - {"name": "media",          "domain": "chapo.casa", "type": "A",     "address": "192.168.179.21",  "ptr": true  }
           - {"name": "qbittorrent",    "domain": "chapo.casa", "type": "A",     "address": "192.168.179.22",  "ptr": true  }
           - {"name": "core",           "domain": "chapo.casa", "type": "A",     "address": "192.168.179.23",  "ptr": true  }
-          - {"name": "runner",         "domain": "chapo.casa", "type": "A",     "address": "192.168.179.24",  "ptr": true  }
+          - {"name": "observability",  "domain": "chapo.casa", "type": "A",     "address": "192.168.179.24",  "ptr": true  }
           - {"name": "git",            "domain": "chapo.casa", "type": "CNAME", "address": "core",            "ptr": false }
           - {"name": "fritz",          "domain": "chapo.casa", "type": "A",     "address": "192.168.178.1",   "ptr": false }
           - {"name": "server",         "domain": "chapo.casa", "type": "A",     "address": "192.168.178.225", "ptr": true  }

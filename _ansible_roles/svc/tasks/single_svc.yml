@@ -1,0 +1,35 @@
+- name: "[{{ svc_vmname }}/{{ svc.name }}] Copy service files"
+  copy:
+    src: "{{ svc_vmname }}/{{ svc.name }}"
+    dest: "/home/ubuntu"
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+
+- name: "[{{ svc_vmname }}/{{ svc.name }}] Find all .j2 files in the templates directory"
+  find:
+    paths: "{{ svc_vmname }}/{{ svc.name }}"
+    patterns: "*.j2"
+  register: found_templates
+  delegate_to: localhost
+
+- name: "[{{ svc_vmname }}/{{ svc.name }}] debug found templates"
+  debug:
+    var: found_templates 
+
+- name: "[{{ svc_vmname }}/{{ svc.name }}] Apply template module to found files"
+  template:
+    src: "{{ item.path }}"
+    dest: "/home/ubuntu/{{ item.path.split('/')[1:] | join('/') | regex_replace('\\.j2$', '') }}"
+  loop: "{{ found_templates.files }}"
+  when: found_templates.matched > 0
+
+- name: "[{{ svc_vmname }}/{{ svc.name }}] Run `docker compose up`"
+  community.docker.docker_compose_v2:
+    project_src: "/home/ubuntu/{{ svc.name }}"
+  register: output
+  loop: "{{ svc_svcs }}"
+
+- name: "[{{ svc_vmname }}/{{ svc.name }}] Debug output"
+  debug:
+    var: output

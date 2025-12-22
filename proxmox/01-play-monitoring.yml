@@ -1,0 +1,20 @@
+---
+- name: Deploy Proxmox Monitoring Stack
+  hosts: pves
+  gather_facts: false
+  vars:
+    token_id: monitoring@pve!monitoring_token
+    token_name: monitoring_token
+  roles:
+    - role: pve
+      tags: pve
+      vars: 
+        pve_pve_host: "{{ ansible_host }}"
+        pve_pve_user: "{{ pve_user }}"
+        pve_pve_password: "{{ pve_password }}"
+        pve_pve_node: "{{ pve_node }}"
+        pve_token_id: "{{ token_id }}"
+        pve_token_name: "{{ token_name }}"
+
+  tasks: []
+

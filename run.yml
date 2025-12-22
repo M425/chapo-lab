@@ -1,4 +1,13 @@
 ---
+- name: Warm-up
+  hosts: ubuntu
+  gather_facts: no
+  tasks:
+    - name: Parse .env
+      ansible.builtin.set_fact:
+        dotenv: "{{ ('[dotenv]\n' + lookup('ansible.builtin.file', '.env') ) | community.general.from_ini }}"
+      tags: always
+
 - name: Manage media
   hosts: ubuntu
   gather_facts: no
@@ -7,7 +16,6 @@
 
     - role: dep
       tags: dep
-      when: os_type == 'ubuntu'
       vars:
         dep_pve_host: "{{ pve_host | mandatory }}"
         dep_pve_user: "{{ pve_user | mandatory }}"
@@ -23,12 +31,11 @@
         dep_vm_memory_mb: "{{ vm_memory_mb | mandatory }}"
         dep_ansible_user: "{{ ansible_user | mandatory }}"
         dep_ssh_key_pub: "{{ ssh_key_pub | mandatory }}"
-        dep_nic_ip_cidr: "{{ nic_ip_cidr | mandatory }}"
+        dep_nic_ip_cidr: "{{ ansible_host | mandatory }}{{ nic_subnet | mandatory }}"
         dep_nic_gateway: "{{ nic_gateway | mandatory }}"
 
     - role: ubu
       tags: ubu
-      when: os_type == 'ubuntu'
       become: yes
       vars:
         ubu_timezone: "{{ timezone | mandatory }}"
@@ -37,6 +44,14 @@
         ubu_swap_size_mb: "{{ swap_size_mb | mandatory }}"
         ubu_docker_users: "{{ docker_users | mandatory }}"
         ubu_enable_auto_updates: "{{ enable_auto_updates | mandatory }}"
+        ubu_nfs_mounts: "{{ nfs_mounts | default([]) }}"
+
+    - role: svc
+      tags: svc
+      become: no
+      vars:
+        svc_svcs: "{{ svcs | default([]) }}"
+        svc_vmname: "{{ vm_name | mandatory }}"
 
   tasks: []
 ...

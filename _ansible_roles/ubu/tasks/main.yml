@@ -346,6 +346,26 @@
       }
   notify: Restart Docker
 
+- name: NFS - Create mount point
+  file:
+    path: "{{ item.dest }}"
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: '0755'
+  loop: "{{ nfs_mounts }}"
+  when: nfs_mounts is defined and nfs_mounts | length > 0
+
+- name: NFS - Mount share
+  mount:
+    src: "{{ item.src }}"
+    path: "{{ item.dest }}"
+    fstype: nfs
+    opts: "{{ item.opts }}"
+    state: mounted
+  loop: "{{ nfs_mounts }}"
+  when: nfs_mounts is defined and nfs_mounts | length > 0
+
 # ============================================
 # Monitoring & Logging
 # ============================================
@@ -366,8 +386,122 @@
   apt:
     name:
       - logwatch
+      - gpg
+      - wget
+      - apt-transport-https
     state: present
 
+- name: Create directory for GPG key
+  file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
+
+- name: Add Grafana GPG key
+  apt_key:
+    url: https://apt.grafana.com/gpg.key
+    keyring: /etc/apt/keyrings/grafana.gpg
+    state: present
+
+- name: Add Grafana repository
+  apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main"
+    filename: grafana
+    state: present
+
+- name: Install Alloy
+  apt:
+    name: alloy
+    state: present
+    update_cache: yes
+
+- name: Add alloy user to required groups
+  user:
+    name: alloy
+    groups: docker,adm
+    append: yes
+
+- name: Configure Alloy to listen on all interfaces
+  lineinfile:
+    path: /etc/default/alloy
+    regexp: '^CUSTOM_ARGS='
+    line: 'CUSTOM_ARGS="--server.http.listen-addr=0.0.0.0:12345"'
+    state: present
+  notify: Restart Alloy
+
+- name: Deploy Alloy configuration
+  copy:
+    dest: /etc/alloy/config.alloy
+    owner: alloy
+    group: alloy
+    mode: '0644'
+    content: |
+      local.file_match "system_logs" {
+          path_targets = [{"__path__" = "/var/log/*.log"}]
+      }
+
+      discovery.docker "containers" {
+          host = "unix:///var/run/docker.sock"
+      }
+
+      discovery.relabel "docker_labels" {
+          targets = []
+          // forward_to = [loki.write.local_loki.receiver]
+
+          // Clean up container name (removes the leading slash)
+          rule {
+              source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+              target_label  = "container"
+          }
+
+          rule {
+              source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+              target_label  = "project"
+          }
+          
+          rule {
+              target_label = "instance"
+              replacement  = constants.hostname
+          }
+          
+          // Add a static job label
+          rule {
+              replacement  = "docker"
+              target_label = "job"
+          }
+      }
+
+      loki.source.file "host_logs" {
+          targets    = local.file_match.system_logs.targets
+          forward_to = [loki.write.local_loki.receiver]
+      }
+
+      loki.source.docker "docker_logs" {
+          host       = "unix:///var/run/docker.sock"
+          targets    = discovery.docker.containers.targets
+          relabel_rules = discovery.relabel.docker_labels.rules
+          // forward_to = [loki.relabel.docker_labels.receiver]
+          forward_to = [loki.write.local_loki.receiver]
+
+      }
+
+      loki.write "local_loki" {
+          endpoint {
+              url = "{{ loki_url }}"
+          }
+      }
+      
+      livedebugging {
+        enabled = true
+      }
+  notify: Restart Alloy
+
+- name: Ensure Alloy is started and enabled
+  systemd:
+    name: alloy
+    state: restarted
+    enabled: yes
+    
 # ============================================
 # Final Steps
 # ============================================
@@ -375,3 +509,4 @@
   apt:
     autoclean: yes
     autoremove: yes
+

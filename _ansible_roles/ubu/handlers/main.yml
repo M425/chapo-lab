@@ -12,3 +12,8 @@
   systemd:
     name: docker
     state: restarted
+
+- name: Restart Alloy
+  systemd:
+    name: alloy
+    state: restarted
