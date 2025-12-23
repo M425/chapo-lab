@@ -490,6 +490,29 @@
               url = "{{ loki_url }}"
           }
       }
+
+      // --- METRICS SECTION (New) ---
+
+      // 1. Enable the internal Node Exporter
+      prometheus.exporter.unix "node_exporter" {
+          include_exporter_metrics = true
+      }
+
+      // 2. Scrape the internal exporter
+      prometheus.scrape "scrape_node_exporter" {
+          targets    = prometheus.exporter.unix.node_exporter.targets
+          forward_to = [prometheus.remote_write.local_prometheus.receiver]
+          
+          // Optional: Add a job label
+          scrape_interval = "15s"
+      }
+
+      // 3. Define where to send the metrics (Prometheus or Mimir)
+      prometheus.remote_write "local_prometheus" {
+          endpoint {
+              url = "{{ prometheus_url }}"
+          }
+      }
       
       livedebugging {
         enabled = true

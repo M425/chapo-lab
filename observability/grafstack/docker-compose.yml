@@ -10,19 +10,23 @@ services:
     volumes:
       - grafana_data:/var/lib/grafana
       - ./provisioning/datasources:/etc/grafana/provisioning/datasources
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
 
   prometheus:
     image: prom/prometheus:latest
     container_name: prometheus
     command:
       - --config.file=/etc/prometheus/prometheus.yml
-      - --storage.tsdb.path=/prometheus # Ensures it uses the volume path
+      - --storage.tsdb.path=/prometheus
       - --web.enable-remote-write-receiver
     ports:
       - "9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
-      - prometheus_data:/prometheus # PERSISTENCE ADDED
+      - prometheus_data:/prometheus
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
 
   loki:
     image: grafana/loki:latest
@@ -32,7 +36,9 @@ services:
     command: -config.file=/etc/loki/local-config.yaml
     volumes:
       - ./loki-config.yml:/etc/loki/local-config.yaml
-      - loki_data:/tmp/loki # PERSISTENCE ADDED (matches loki-config.yml path)
+      - loki_data:/loki
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
 
 volumes:
   grafana_data:

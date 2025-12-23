@@ -20,6 +20,7 @@ all:
 
     # --- OBSERVABILITY CONFIG ---
     loki_url: "http://observability.chapo.casa:3100/loki/api/v1/push"
+    prometheus_url: "http://observability.chapo.casa:9090/api/v1/write"
 
     # --- CONNECTION CONFIG ---
     ssh_key_pub: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPsnyip4GXugAf+n7RCwamBIWiY5exnEaKLfhK4mYxj+ mat@mat-win-lap"
@@ -136,3 +137,5 @@ all:
           vm_name: openmediavault
           vm_id: 100
           ansible_host: 192.168.179.20
+          ansible_user: root
+          

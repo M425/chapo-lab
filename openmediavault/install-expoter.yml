@@ -1,0 +1,76 @@
+---
+- name: Install Prometheus exporters using Docker via systemd
+  hosts: openmediavault
+  become: true
+
+  vars:
+    node_exporter_image: docker.io/prom/node-exporter:latest
+    smartctl_exporter_image: quay.io/prometheuscommunity/smartctl-exporter:latest
+
+  tasks:
+
+    - name: Create node_exporter systemd service
+      copy:
+        dest: /etc/systemd/system/node_exporter.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Prometheus Node Exporter (Podman)
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Restart=always
+          ExecStartPre=-/usr/bin/podman stop node_exporter
+          ExecStartPre=-/usr/bin/podman rm node_exporter
+          ExecStart=/usr/bin/podman run --name=node_exporter \
+            --net=host \
+            --pid=host \
+            -v /:/host:ro,rslave \
+            {{ node_exporter_image }} \
+            --path.rootfs=/host
+          ExecStop=/usr/bin/podman stop node_exporter
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Create smartctl_exporter systemd service
+      copy:
+        dest: /etc/systemd/system/smartctl_exporter.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Prometheus SMART Exporter (Docker)
+          After=network-online.target
+          Wants=network-online.target
+
+
+          [Service]
+          Restart=always
+          ExecStart=/usr/bin/podman run --rm \
+            --name=smartctl_exporter \
+            --net=host \
+            --user root \
+            --privileged \
+            -v /dev:/dev \
+            {{ smartctl_exporter_image }}
+          ExecStop=/usr/bin/podman stop smartctl_exporter
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Just-in-time systemd reload and enable service
+      systemd:
+        name: node_exporter
+        enabled: yes
+        state: started
+        daemon_reload: yes
+
+    - name: Enable and start exporters
+      systemd:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+      loop:
+        - node_exporter
+        - smartctl_exporter

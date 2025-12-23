@@ -8,5 +8,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./pve.yml:/etc/prometheus/pve.yml
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
     labels:
       org.label-schema.group: "monitoring"
